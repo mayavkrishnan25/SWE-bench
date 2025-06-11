@@ -1,5 +1,6 @@
 import re
-from enum import Enum
+from enum import Enum  # noqa
+
 from swebench.harness.constants import TestStatus
 
 
@@ -203,6 +204,9 @@ def parse_log_sympy(log: str) -> dict[str, str]:
     for line in log.split("\n"):
         line = line.strip()
         if line.startswith("test_"):
+            if line.endswith("[FAIL]") or line.endswith("[OK]"):
+                line = line[: line.rfind("[")]
+                line = line.strip()
             if line.endswith(" E"):
                 test = line.split()[0]
                 test_status_map[test] = TestStatus.ERROR.value
@@ -236,6 +240,38 @@ def parse_log_matplotlib(log: str) -> dict[str, str]:
             if len(test_case) <= 1:
                 continue
             test_status_map[test_case[1]] = test_case[0]
+    return test_status_map
+
+
+def parse_log_pytest_pydantic(log: str) -> dict[str, str]:
+    """
+    Parser for test logs generated with PyTest framework (Later Version)
+
+    Args:
+        log (str): log content
+    Returns:
+        dict: test case to test status mapping
+    """
+    test_status_map = {}
+    escapes = "".join([chr(char) for char in range(1, 32)])
+    for line in log.split("\n"):
+        line = re.sub(r"\[(\d+)m", "", line)
+        translator = str.maketrans("", "", escapes)
+        line = line.translate(translator)
+        # additionally to pytest v2 we remove the [...] from FAILED
+        line = re.sub(r"FAILED\s*\[.*?\]", "FAILED", line)
+        if "tests/test_main.py::test_model_post_init_supertype_private_attr" in line:
+            print(line)
+
+        if any([line.startswith(x.value) for x in TestStatus]):
+            if line.startswith(TestStatus.FAILED.value):
+                line = line.replace(" - ", " ")
+            test_case = line.split()
+            test_status_map[test_case[1]] = test_case[0]
+        # Support older pytest versions by checking if the line ends with the test status
+        elif any([line.endswith(x.value) for x in TestStatus]):
+            test_case = line.split()
+            test_status_map[test_case[0]] = test_case[1]
     return test_status_map
 
 
@@ -276,3 +312,80 @@ MAP_REPO_TO_PARSER = {
     "sphinx-doc/sphinx": parse_log_sphinx,
     "sympy/sympy": parse_log_sympy,
 }
+
+parse_log_mypy = parse_log_pytest
+parse_log_moto = parse_log_pytest
+parse_log_conan = parse_log_pytest
+MAP_REPO_TO_PARSER.update(
+    {
+        "python/mypy": parse_log_mypy,
+        "getmoto/moto": parse_log_moto,
+        "conan-io/conan": parse_log_conan,
+    }
+)
+
+parse_log_modin = parse_log_pytest
+MAP_REPO_TO_PARSER.update(
+    {
+        "modin-project/modin": parse_log_modin,
+    }
+)
+
+parse_log_monai = parse_log_pytest
+MAP_REPO_TO_PARSER.update(
+    {
+        "Project-MONAI/MONAI": parse_log_monai,
+    }
+)
+
+parse_log_dvc = parse_log_pytest
+MAP_REPO_TO_PARSER.update(
+    {
+        "iterative/dvc": parse_log_dvc,
+    }
+)
+
+parse_log_dask = parse_log_pytest
+MAP_REPO_TO_PARSER.update(
+    {
+        "dask/dask": parse_log_dask,
+    }
+)
+
+parse_log_bokeh = parse_log_pytest
+MAP_REPO_TO_PARSER.update(
+    {
+        "bokeh/bokeh": parse_log_bokeh,
+    }
+)
+
+parse_log_mne = parse_log_pytest
+MAP_REPO_TO_PARSER.update(
+    {
+        "mne-tools/mne-python": parse_log_mne,
+    }
+)
+
+parse_log_hypothesis = parse_log_pytest
+MAP_REPO_TO_PARSER.update(
+    {
+        "HypothesisWorks/hypothesis": parse_log_hypothesis,
+    }
+)
+
+parse_log_pydantic = parse_log_pytest_pydantic
+MAP_REPO_TO_PARSER.update(
+    {
+        "pydantic/pydantic": parse_log_pydantic,
+    }
+)
+
+parse_log_pandas = parse_log_pytest
+MAP_REPO_TO_PARSER.update({"pandas-dev/pandas": parse_log_pandas})
+
+parse_log_hydra = parse_log_pytest
+MAP_REPO_TO_PARSER.update({"facebookresearch/hydra": parse_log_hydra})
+
+# All keys should be in lower case
+LOWER_MAP_REPO_TO_PARSER = {k.lower(): v for k, v in MAP_REPO_TO_PARSER.items()}
+MAP_REPO_TO_PARSER = LOWER_MAP_REPO_TO_PARSER
