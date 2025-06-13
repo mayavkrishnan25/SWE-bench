@@ -33,6 +33,10 @@ from swebench.harness.docker_build import (
     close_logger,
     setup_logger,
 )
+from swebench.harness.modal_eval import (
+    run_instances_modal,
+    validate_modal_credentials,
+)
 from swebench.harness.grading import get_eval_report
 from swebench.harness.test_spec import make_test_spec, TestSpec
 from swebench.harness.utils import load_swebench_dataset, str2bool
@@ -117,7 +121,7 @@ def run_instance(
         # Attempt to apply patch to container
         val = container.exec_run(
             "git apply --allow-empty -v /tmp/patch.diff",
-            workdir="/testbed",
+            workdir="/app",
             user="root",
         )
         if val.exit_code != 0:
@@ -126,7 +130,7 @@ def run_instance(
             # try "patch --batch --fuzz=5 -p1 -i {patch_path}" to try again
             val = container.exec_run(
                 "patch --batch --fuzz=5 -p1 -i /tmp/patch.diff",
-                workdir="/testbed",
+                workdir="/app",
                 user="root",
             )
             if val.exit_code != 0:
@@ -143,7 +147,7 @@ def run_instance(
 
         # Get git diff before running eval script
         git_diff_output_before = (
-            container.exec_run("git diff", workdir="/testbed").output.decode("utf-8").strip()
+            container.exec_run("git diff", workdir="/app").output.decode("utf-8").strip()
         )
         logger.info(f"Git diff before:\n{git_diff_output_before}")
 
@@ -171,7 +175,7 @@ def run_instance(
 
         # Get git diff after running eval script
         git_diff_output_after = (
-            container.exec_run("git diff", workdir="/testbed").output.decode("utf-8").strip()
+            container.exec_run("git diff", workdir="/app").output.decode("utf-8").strip()
         )
 
         # Check if git diff changed after running eval script
@@ -255,6 +259,10 @@ def run_instances(
 
     # run instances in parallel
     print(f"Running {len(instances)} instances...")
+    # skip this problmatic id 
+    #  (12, 'scikit-learn__scikit-learn-25102'), (13, 'scikit-learn__scikit-learn-25232'), (14, 'scikit-learn__scikit-learn-25747') (15, 'scikit-learn__scikit-learn-25931'), (16, 'scikit-learn__scikit-learn-25973'), (17, 'scikit-learn__scikit-learn-26194'), (18, 'scikit-learn__scikit-learn-26323'), (19, 'scikit-learn__scikit-learn-9288'),
+    to_skip = set(["scikit-learn__scikit-learn-25102", "scikit-learn__scikit-learn-25232", "scikit-learn__scikit-learn-25747", "scikit-learn__scikit-learn-25931", "scikit-learn__scikit-learn-25973", "scikit-learn__scikit-learn-26194", "scikit-learn__scikit-learn-26323", "scikit-learn__scikit-learn-9288", "sphinx-doc__sphinx-7590", "sphinx-doc__sphinx-7985"])
+    test_specs = [test_spec for test_spec in test_specs if test_spec.instance_id not in to_skip]
     with tqdm(total=len(instances), smoothing=0) as pbar:
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             # Create a future for running each instance
@@ -273,16 +281,21 @@ def run_instances(
                     client,
                     run_id,
                     timeout,
-                ): None
+                ): test_spec.instance_id  # Store the instance_id with each future
                 for test_spec in test_specs
             }
             # Wait for each future to complete
             for future in as_completed(futures):
                 pbar.update(1)
                 try:
+                    # Get the instance_id associated with this future
+                    instance_id = futures[future]
                     # Update progress bar, check if instance ran successfully
-                    future.result()
+                    result = future.result()
+                    print(f"Completed instance {instance_id} with result: {result}")
                 except Exception as e:
+                    instance_id = futures[future]
+                    print(f"Error in instance {instance_id}: {str(e)}")
                     traceback.print_exc()
                     continue
     print("All instances run.")
@@ -496,6 +509,7 @@ def main(
         open_file_limit: int,
         run_id: str,
         timeout: int,
+        modal: bool,
     ):
     """
     Run evaluation harness for the given dataset and predictions.
@@ -503,7 +517,7 @@ def main(
     # set open file limit
     assert len(run_id) > 0, "Run ID must be provided"
     resource.setrlimit(resource.RLIMIT_NOFILE, (open_file_limit, open_file_limit))
-    client = docker.from_env()
+    
 
     # load predictions as map of instance_id to prediction
     if predictions_path == 'gold':
@@ -523,6 +537,19 @@ def main(
     # get dataset from predictions
     dataset = get_dataset_from_preds(dataset_name, split, instance_ids, predictions, run_id)
     full_dataset = load_swebench_dataset(dataset_name, split, instance_ids)
+
+    if modal:
+        if not dataset:
+            import swebench.harness.reporting
+            swebench.harness.reporting.make_run_report(predictions, full_dataset, run_id)
+        else:
+            validate_modal_credentials()
+            run_instances_modal(predictions, dataset, full_dataset, run_id, timeout)
+        return
+
+    # Moving this line below modal invocation to avoid docker client initialization when running on Modal
+    client = docker.from_env()
+
     existing_images = list_images(client)
     print(f"Running {len(dataset)} unevaluated instances...")
     if not dataset:
@@ -564,6 +591,8 @@ if __name__ == "__main__":
         "--clean", type=str2bool, default=False, help="Clean images above cache level"
     )
     parser.add_argument("--run_id", type=str, required=True, help="Run ID - identifies the run")
+    parser.add_argument("--modal", type=str2bool, default=False, help="Run on Modal")
+
     args = parser.parse_args()
 
     main(**vars(args))
