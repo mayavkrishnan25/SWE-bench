@@ -429,12 +429,16 @@ def run_instances_modal(
                         )
                         for test_spec in run_test_specs
                     ],
+                    return_exceptions=True,
                 )
 
                 for result in results:
-                    result = cast(TestOutput, result)
-
+                    if isinstance(result, Exception):
+                        # Since return_exceptions=True, result can be of type Exception
+                        print(f"Error running instance: {result}, skipping.")
+                        continue
                     # Save logs locally
+                    result = cast(TestOutput, result)
                     log_dir = result.log_dir
                     log_dir.mkdir(parents=True, exist_ok=True)
                     with open(log_dir / "run_instance.log", "w") as f:
