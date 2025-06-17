@@ -256,7 +256,7 @@ def run_instance_modal(
     logger = setup_logger(instance_id, log_file)
 
     try:
-        runner = ModalSandboxRuntime(test_spec, timeout)
+        runner = ModalSandboxRuntime(test_spec=test_spec, timeout=timeout, logger=logger)
     except Exception as e:
         print(f"Error creating sandbox: {e}")
         raise EvaluationError(
