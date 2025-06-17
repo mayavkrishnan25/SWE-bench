@@ -10,6 +10,7 @@ import modal.io_streams
 import tenacity
 import time
 import traceback
+from logging import Logger
 
 from dataclasses import dataclass
 from pathlib import Path
@@ -54,14 +55,19 @@ class ModalSandboxRuntime:
     """
 
     def __init__(
-        self, test_spec: TestSpec, timeout: int | None = None, verbose: bool = True
+        self, test_spec: TestSpec, timeout: int | None = None, verbose: bool = True, logger: Logger | None = None
     ):
         self.test_spec = test_spec
         self.image = ModalSandboxRuntime.get_instance_image(test_spec)
         self.sandbox = self._get_sandbox(timeout)
         self.verbose = verbose
         self._stream_tasks = []
-        print(f"Created Modal Sandbox with ID {self.sandbox.object_id} for instance {test_spec.instance_id}")
+        if self.verbose:
+            log_msg = f"Created Modal Sandbox with ID {self.sandbox.object_id} for instance {test_spec.instance_id}"
+            if logger:
+                logger.info(log_msg)
+            else:
+                print(log_msg)
 
         # Hack for pylint
         self.write_file("/sys/fs/cgroup/cpu/cpu.shares", "2048")
