@@ -258,7 +258,7 @@ def run_instance_modal(
     try:
         runner = ModalSandboxRuntime(test_spec=test_spec, timeout=timeout, logger=logger)
     except Exception as e:
-        print(f"Error creating sandbox: {e}")
+        logger.error(f"Error creating sandbox: {e}")
         raise EvaluationError(
             instance_id,
             f"Error creating sandbox: {e}",
