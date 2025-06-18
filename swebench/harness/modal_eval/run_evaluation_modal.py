@@ -10,6 +10,7 @@ import modal.io_streams
 import tenacity
 import time
 import traceback
+from logging import Logger
 
 from dataclasses import dataclass
 from pathlib import Path
@@ -54,13 +55,19 @@ class ModalSandboxRuntime:
     """
 
     def __init__(
-        self, test_spec: TestSpec, timeout: int | None = None, verbose: bool = True
+        self, test_spec: TestSpec, timeout: int | None = None, verbose: bool = True, logger: Logger | None = None
     ):
         self.test_spec = test_spec
         self.image = ModalSandboxRuntime.get_instance_image(test_spec)
         self.sandbox = self._get_sandbox(timeout)
         self.verbose = verbose
         self._stream_tasks = []
+        if self.verbose:
+            log_msg = f"Created Modal Sandbox with ID {self.sandbox.object_id} for instance {test_spec.instance_id}"
+            if logger:
+                logger.info(log_msg)
+            else:
+                print(log_msg)
 
         # Hack for pylint
         self.write_file("/sys/fs/cgroup/cpu/cpu.shares", "2048")
@@ -249,9 +256,9 @@ def run_instance_modal(
     logger = setup_logger(instance_id, log_file)
 
     try:
-        runner = ModalSandboxRuntime(test_spec, timeout)
+        runner = ModalSandboxRuntime(test_spec=test_spec, timeout=timeout, logger=logger)
     except Exception as e:
-        print(f"Error creating sandbox: {e}")
+        logger.error(f"Error creating sandbox: {e}")
         raise EvaluationError(
             instance_id,
             f"Error creating sandbox: {e}",
@@ -429,12 +436,16 @@ def run_instances_modal(
                         )
                         for test_spec in run_test_specs
                     ],
+                    return_exceptions=True,
                 )
 
                 for result in results:
-                    result = cast(TestOutput, result)
-
+                    if isinstance(result, Exception):
+                        # Since return_exceptions=True, result can be of type Exception
+                        print(f"Error running instance: {result}, skipping.")
+                        continue
                     # Save logs locally
+                    result = cast(TestOutput, result)
                     log_dir = result.log_dir
                     log_dir.mkdir(parents=True, exist_ok=True)
                     with open(log_dir / "run_instance.log", "w") as f:
